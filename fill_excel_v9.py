@@ -8,10 +8,13 @@ Cambios respecto a v8:
 """
 
 import os
+import logging
 import pythoncom
 from datetime import datetime, time, timedelta
 from win32com import client
 from parse_tacografo import parse_csv_shifts
+
+logger = logging.getLogger(__name__)
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -78,7 +81,11 @@ def parse_csv_for_unknowns(csv_path: str) -> set:
     en REGION_ABBR ni son Madrid (que se resuelve automáticamente a 'Pinto').
     El frontend las mostrará al usuario para que introduzca la ciudad.
     """
+    logger.info(f"Analyzing CSV for unknown regions: {csv_path}")
+    
     shifts = parse_csv_shifts(csv_path)
+    logger.info(f"Parsed {len(shifts)} shifts from CSV")
+    
     unknown = set()
     for s in shifts:
         for loc in [s.get("origin"), s.get("destination")]:
@@ -91,6 +98,8 @@ def parse_csv_for_unknowns(csv_path: str) -> set:
             else:
                 # Región desconocida completamente
                 unknown.add(loc)
+    
+    logger.info(f"Found {len(unknown)} unknown regions: {unknown}")
     return unknown
 
 # ── Función principal ─────────────────────────────────────────────────────────
@@ -106,11 +115,16 @@ def fill_excel(
     Genera el Excel de gastos. Devuelve el nombre del fichero generado.
     Ya no usa input() — toda la info viene como parámetros.
     """
-    print(f"--> Leyendo CSV desde: {os.path.abspath(csv_path)}")
+    logger.info(f"Starting Excel generation")
+    logger.info(f"Template: {os.path.abspath(excel_path)}")
+    logger.info(f"CSV: {os.path.abspath(csv_path)}")
+    logger.info(f"Manual shifts: {len(manual_shifts)}")
+    
     shifts = parse_csv_shifts(csv_path)
+    logger.info(f"Parsed {len(shifts)} shifts from CSV")
 
     # Añadir actividades manuales recibidas desde el formulario web
-    for m in manual_shifts:
+    for idx, m in enumerate(manual_shifts):
         try:
             dt_base = datetime.strptime(m["fecha"], "%d/%m/%Y")
             h_i, min_i = map(int, m["h_ini"].split(":"))
@@ -129,10 +143,12 @@ def fill_excel(
                 "work_duration": end_dt - start_dt,
                 "drive_duration": timedelta(0),
             })
+            logger.info(f"Added manual shift {idx+1}/{len(manual_shifts)}: {m['fecha']} ({m.get('concepto', 'N/A')})")
         except Exception as e:
-            print(f"[WARN] Actividad manual ignorada por error: {e}")
+            logger.warning(f"Skipping manual shift {idx+1}: {e}")
 
     shifts.sort(key=lambda x: x["start_dt"])
+    logger.info(f"Total shifts to process: {len(shifts)}")
 
     if not shifts:
         raise ValueError("No se encontraron jornadas en el CSV.")
@@ -252,17 +268,33 @@ def fill_excel(
             s_end_dt  = shift["end_dt"]  if shift["end_dt"]  else shift["start_dt"]
 
             shift_meals = set()
-            if s_start_t < T_0700:                        shift_meals.add("desayuno")
-            if s_start_t < T_1500 and s_end_t > T_1300:  shift_meals.add("comida")
-            if s_end_t > T_2200:                          shift_meals.add("cena")
+            
+            # Desayuno: if shift starts before 07:00
+            if s_start_t < T_0700:
+                shift_meals.add("desayuno")
+                logger.debug(f"{current_date} - Desayuno: shift starts at {s_start_t} < 07:00")
+            
+            # Comida: if shift spans lunch time (13:00-15:00)
+            if s_start_t < T_1500 and s_end_t > T_1300:
+                shift_meals.add("comida")
+                logger.debug(f"{current_date} - Comida: shift spans {s_start_t}-{s_end_t} covering 13:00-15:00")
+            
+            # Cena: if shift ends after 22:00
+            if s_end_t > T_2200:
+                shift_meals.add("cena")
+                logger.debug(f"{current_date} - Cena: shift ends at {s_end_t} > 22:00")
 
-            if (day_end - day_start) >= timedelta(hours=12):
+            # 12-hour jornada logic: if day totals >= 12h, assign all meals for final shift
+            day_duration = day_end - day_start
+            if day_duration >= timedelta(hours=12):
                 if s_end_dt == day_end:
+                    logger.debug(f"{current_date} - 12h jornada detected (duration: {day_duration}), adding all meals to final shift")
                     for meal in ("desayuno", "comida", "cena"):
                         if meal not in assigned_meals[current_date]:
                             shift_meals.add(meal)
                 assigned_meals[current_date].add("note_12h")
 
+            # Write meal assignments to Excel
             if "desayuno" in shift_meals and "desayuno" not in assigned_meals[current_date]:
                 write_safe(ws, dia_row + 1, 24, "X")
                 assigned_meals[current_date].add("desayuno")
@@ -288,13 +320,16 @@ def fill_excel(
         output_filename = f"Gastos_0529_RJW_{year}_{month_name}({num_hojas}hojas).xlsx"
 
         abs_output = os.path.join(os.path.abspath(output_dir), output_filename)
+        logger.info(f"Saving Excel file with {num_hojas} sheet(s) to: {abs_output}")
         wb_output.SaveAs(abs_output)
-        print(f"Generado: {output_filename}")
+        logger.info(f"Successfully generated: {output_filename}")
         return output_filename
 
     except Exception as e:
+        logger.exception(f"Error during Excel generation: {e}")
         raise
     finally:
+        logger.debug("Cleaning up Excel COM objects")
         if wb_template: wb_template.Close(False)
         if wb_output:   wb_output.Close(False)
         if 'excel' in dir():
@@ -304,6 +339,11 @@ def fill_excel(
 # ── Función de conversión a PDF ─────────────────────────────────────────────────────────
 
 def convert_to_pdf(excel_file_path):
+    """
+    Convert Excel file to PDF format.
+    """
+    logger.info(f"Starting PDF conversion: {excel_file_path}")
+    
     pythoncom.CoInitialize()
     abs_path = os.path.abspath(excel_file_path)
     pdf_path = abs_path.replace('.xlsx', '.pdf')
@@ -312,9 +352,14 @@ def convert_to_pdf(excel_file_path):
     excel.Visible = False
     
     try:
+        logger.info(f"Opening Excel workbook: {abs_path}")
         wb_com = excel.Workbooks.Open(abs_path)
+        logger.info(f"Exporting to PDF: {pdf_path}")
         wb_com.ExportAsFixedFormat(0, pdf_path)
-        print(f"Generado PDF: {os.path.basename(pdf_path)}")
+        logger.info(f"PDF generated successfully: {os.path.basename(pdf_path)}")
+    except Exception as e:
+        logger.error(f"PDF conversion failed: {e}")
+        raise
     finally:
         if 'wb_com' in locals():
             wb_com.Close(False)

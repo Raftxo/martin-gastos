@@ -1,0 +1,7 @@
+Flask==3.1.3
+openpyxl==3.1.5
+pywin32==311
+pandas==3.0.1
+chardet==5.2.0
+python-dateutil==2.9.0.post0
+Werkzeug==3.1.8

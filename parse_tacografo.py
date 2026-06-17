@@ -1,6 +1,67 @@
 import csv
 import re
+import logging
+import chardet
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
+
+def detect_csv_encoding(file_path: str) -> str:
+    """
+    Auto-detect CSV encoding using chardet.
+    Falls back to UTF-8 if detection fails.
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            raw = f.read(100000)  # Read first 100KB for detection
+        
+        detected = chardet.detect(raw)
+        encoding = detected.get('encoding') or 'utf-8'
+        confidence = detected.get('confidence', 0)
+        
+        logger.info(f"Detected encoding: {encoding} (confidence: {confidence:.1%})")
+        
+        # Validate encoding works by attempting to decode
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                f.read(1000)
+            logger.info(f"✓ Using encoding: {encoding}")
+            return encoding
+        except (UnicodeDecodeError, LookupError) as e:
+            logger.warning(f"Detected encoding '{encoding}' failed: {e}. Falling back to UTF-8")
+            return 'utf-8'
+    except Exception as e:
+        logger.warning(f"Encoding detection failed: {e}. Using UTF-8 fallback")
+        return 'utf-8'
+
+def validate_csv_structure(file_path: str, encoding: str) -> None:
+    """
+    Validate that CSV has the required columns.
+    Expected columns: timestamp, event_type, description, (duration_field), duration
+    """
+    required_fields = ['timestamp', 'event_type', 'description', 'duration']
+    
+    try:
+        with open(file_path, mode='r', encoding=encoding) as f:
+            reader = csv.reader(f, delimiter=';')
+            first_row = next(reader, None)
+            
+            if not first_row:
+                raise ValueError("CSV file is empty")
+            
+            logger.info(f"CSV structure - Headers (first row): {first_row}")
+            
+            # Validate that we have enough columns (at least 5 for our parsing)
+            if len(first_row) < 5:
+                raise ValueError(
+                    f"CSV has only {len(first_row)} columns. "
+                    f"Expected at least 5 columns (timestamp, event_type, description, ???, duration)"
+                )
+            
+            logger.info("✓ CSV structure validation passed")
+    except Exception as e:
+        logger.error(f"CSV structure validation failed: {e}")
+        raise
 
 def parse_duration(duration_str):
     if not duration_str or duration_str == "":
@@ -8,10 +69,21 @@ def parse_duration(duration_str):
     h, m = map(int, duration_str.split(':'))
     return timedelta(hours=h, minutes=m)
 
-def parse_csv_shifts(file_path):
+def parse_csv_shifts(file_path, encoding: str = None):
     shifts = []
     
-    with open(file_path, mode='r', encoding='utf-8') as f:
+    # Auto-detect encoding if not provided
+    if encoding is None:
+        encoding = detect_csv_encoding(file_path)
+    
+    # Validate CSV structure
+    try:
+        validate_csv_structure(file_path, encoding)
+    except ValueError as e:
+        logger.error(f"CSV validation error: {e}")
+        raise
+    
+    with open(file_path, mode='r', encoding=encoding) as f:
         reader = csv.reader(f, delimiter=';')
         
         current_shift = None
@@ -88,7 +160,17 @@ def parse_csv_shifts(file_path):
     return shifts
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
     csv_file = "ACTIVITIES_RAFAL JANUSZ_WYSOCKI_EX1434298H000003_20260225_172525.csv"
-    results = parse_csv_shifts(csv_file)
-    for s in results:
-        print(f"Start: {s['start_dt']} | Plate: {s['plate']} | KMs: {s['km_start']} - {s['km_end']} | {s['origin']} -> {s['destination']}")
+    try:
+        results = parse_csv_shifts(csv_file)
+        logger.info(f"Successfully parsed {len(results)} shifts from CSV")
+        for s in results:
+            logger.info(f"Shift: {s['start_dt']} | {s['origin']} -> {s['destination']} | KMs: {s['km_start']}-{s['km_end']}")
+    except Exception as e:
+        logger.error(f"Failed to parse CSV: {e}")
+        raise
