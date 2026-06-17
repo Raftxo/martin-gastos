@@ -8,7 +8,7 @@ import json
 import logging
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf
+from fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf, export_preview_png
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -149,6 +149,14 @@ def generate():
         except Exception as pdf_err:
             logger.warning(f"PDF conversion failed (non-fatal): {pdf_err}")
             # Don't fail the request if PDF fails — XLSX is still valid
+
+        preview_filename = None
+        logger.info(f"Generating PNG preview: {xlsx_abs}")
+        try:
+            preview_filename = export_preview_png(xlsx_abs)
+            logger.info(f"PNG preview successful: {preview_filename}")
+        except Exception as preview_err:
+            logger.warning(f"PNG preview failed (non-fatal): {preview_err}")
         
         # Clean up the uploaded CSV file
         try:
@@ -158,7 +166,7 @@ def generate():
         except Exception as cleanup_err:
             logger.warning(f"Failed to cleanup CSV file: {cleanup_err}")
         
-        return jsonify({"output": output_filename})
+        return jsonify({"output": output_filename, "preview": preview_filename})
     except ValueError as e:
         logger.error(f"Validation error in Excel generation: {e}")
         return jsonify({"error": f"Error de validación: {str(e)}"}), 400
@@ -169,8 +177,19 @@ def generate():
 
 @app.route("/outputs/<filename>")
 def serve_output(filename):
-    mimetype = 'application/pdf' if filename.endswith('.pdf') else None
-    return send_from_directory(OUTPUTS_DIR, filename, mimetype=mimetype)
+    is_pdf = filename.lower().endswith('.pdf')
+    as_attachment = request.args.get("download") == "1"
+    mimetype = 'application/pdf' if is_pdf else None
+    response = send_from_directory(
+        OUTPUTS_DIR,
+        filename,
+        mimetype=mimetype,
+        as_attachment=as_attachment,
+        download_name=filename,
+    )
+    if is_pdf and not as_attachment:
+        response.headers["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response
 
 
 # ── Arranque ─────────────────────────────────────────────────────────────────

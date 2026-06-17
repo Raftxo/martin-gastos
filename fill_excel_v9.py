@@ -365,3 +365,49 @@ def convert_to_pdf(excel_file_path):
             wb_com.Close(False)
         excel.Quit()
         pythoncom.CoUninitialize()
+
+
+def export_preview_png(excel_file_path):
+    """
+    Export the first worksheet as a PNG preview.
+    This avoids embedding the PDF directly, which can trigger browser downloads.
+    """
+    logger.info(f"Starting PNG preview export: {excel_file_path}")
+
+    pythoncom.CoInitialize()
+    abs_path = os.path.abspath(excel_file_path)
+    png_path = abs_path.replace('.xlsx', '.png')
+
+    excel = client.Dispatch("Excel.Application")
+    excel.Visible = False
+    excel.DisplayAlerts = False
+
+    try:
+        wb_com = excel.Workbooks.Open(abs_path)
+        ws = wb_com.Worksheets(1)
+        ws.Activate()
+
+        print_area = ws.PageSetup.PrintArea
+        preview_range = ws.Range(print_area) if print_area else ws.UsedRange
+        preview_range.CopyPicture(Appearance=1, Format=2)
+
+        chart_obj = ws.ChartObjects().Add(
+            preview_range.Left,
+            preview_range.Top,
+            preview_range.Width,
+            preview_range.Height,
+        )
+        chart_obj.Chart.Paste()
+        chart_obj.Chart.Export(png_path)
+        chart_obj.Delete()
+
+        logger.info(f"PNG preview generated successfully: {os.path.basename(png_path)}")
+        return os.path.basename(png_path)
+    except Exception as e:
+        logger.error(f"PNG preview export failed: {e}")
+        raise
+    finally:
+        if 'wb_com' in locals():
+            wb_com.Close(False)
+        excel.Quit()
+        pythoncom.CoUninitialize()
