@@ -43,6 +43,7 @@ Thumbs.db
 # Application-specific
 uploads/
 outputs/
+excel_templates/
 *.xlsx
 *.pdf
 *.csv
