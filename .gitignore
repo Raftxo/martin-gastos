@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Entornos virtuales (esconden tus librerías instaladas)
+venv/
+.venv/
+env/
+
+# Variables de entorno (¡MUY IMPORTANTE! Aquí guardas tus contraseñas y claves secretas)
+.env
+instance/
+
+# Archivos del sistema y de editores
+.vscode/
+.idea/
+.DS_Store

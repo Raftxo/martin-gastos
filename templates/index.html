@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gastos Martin</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+  }
+
+  .container {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  header {
+    margin-bottom: 2rem;
+  }
+  header h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: #1a1a2e;
+    letter-spacing: -0.3px;
+  }
+  header p {
+    color: #6b7280;
+    font-size: 0.92rem;
+    margin-top: 4px;
+  }
+
+  /* ── Steps ── */
+  .step {
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+    transition: box-shadow 0.2s;
+  }
+  .step.disabled {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 1.2rem;
+  }
+  .step-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #1a1a2e;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-num.done { background: #10b981; }
+  .step-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1a1a2e;
+  }
+  .step-sub {
+    font-size: 0.82rem;
+    color: #9ca3af;
+    margin-left: auto;
+  }
+
+  /* ── Select ── */
+  select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 0.92rem;
+    background: #fff;
+    color: #1a1a2e;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    cursor: pointer;
+  }
+  select:focus { outline: 2px solid #1a1a2e; outline-offset: 2px; }
+
+  /* ── Drop zone ── */
+  .dropzone {
+    border: 2px dashed #d1d5db;
+    border-radius: 10px;
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: #fafafa;
+  }
+  .dropzone:hover, .dropzone.drag-over {
+    border-color: #1a1a2e;
+    background: #f0f2f5;
+  }
+  .dropzone.has-file {
+    border-color: #10b981;
+    background: #f0fdf4;
+  }
+  .dropzone-icon {
+    font-size: 2rem;
+    margin-bottom: 10px;
+    color: #9ca3af;
+  }
+  .dropzone.has-file .dropzone-icon { color: #10b981; }
+  .dropzone p { font-size: 0.9rem; color: #6b7280; }
+  .dropzone strong { color: #1a1a2e; font-weight: 600; }
+  .dropzone small { font-size: 0.78rem; color: #9ca3af; margin-top: 4px; display: block; }
+  #csv-input { display: none; }
+
+  /* ── Toggle ── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .toggle-label { font-size: 0.92rem; color: #374151; }
+  .toggle {
+    position: relative;
+    width: 44px; height: 24px; flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider-track {
+    position: absolute; inset: 0;
+    background: #d1d5db;
+    border-radius: 24px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .slider-track::before {
+    content: '';
+    position: absolute;
+    width: 18px; height: 18px;
+    left: 3px; top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked + .slider-track { background: #1a1a2e; }
+  .toggle input:checked + .slider-track::before { transform: translateX(20px); }
+
+  /* ── Manual shifts ── */
+  .manual-shift {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    position: relative;
+  }
+  .manual-shift-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .manual-shift-grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .field label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #6b7280;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .field input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    background: #fff;
+    color: #1a1a2e;
+  }
+  .field input:focus { outline: 2px solid #1a1a2e; outline-offset: 1px; }
+  .remove-btn {
+    position: absolute;
+    top: 10px; right: 10px;
+    background: none; border: none;
+    color: #ef4444; font-size: 1.1rem;
+    cursor: pointer; line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .remove-btn:hover { background: #fee2e2; }
+
+  /* ── Location fields ── */
+  .location-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .location-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .location-item label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .location-item input {
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    color: #1a1a2e;
+    background: #fff;
+  }
+  .location-item input:focus { outline: 2px solid #1a1a2e; outline-offset: 1px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary {
+    background: #1a1a2e;
+    color: #fff;
+  }
+  .btn-primary:hover { background: #2d2d4a; }
+  .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; transform: none; }
+  .btn-secondary {
+    background: transparent;
+    color: #374151;
+    border: 1px solid #d1d5db;
+  }
+  .btn-secondary:hover { background: #f3f4f6; }
+  .btn-sm { padding: 6px 12px; font-size: 0.82rem; }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 1rem; }
+
+  /* ── Spinner ── */
+  .spinner {
+    display: none;
+    width: 20px; height: 20px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #1a1a2e;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Result ── */
+  #result-section { display: none; }
+  .result-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 1rem 1.25rem;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+  }
+  .result-bar .icon { font-size: 1.4rem; }
+  .result-bar strong { font-size: 0.95rem; color: #065f46; }
+  .result-bar small { font-size: 0.8rem; color: #6b7280; }
+  .pdf-frame {
+    width: 100%;
+    height: 680px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-top: 0.5rem;
+  }
+
+  /* ── Alert ── */
+  .alert {
+    display: none;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    margin-top: 0.75rem;
+  }
+  .alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .alert-info  { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+
+  /* ── Separator ── */
+  .sep {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 1.2rem 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>📋 Hoja de gastos</h1>
+    <p>Genera tu informe mensual en Excel a partir del CSV del tacógrafo.</p>
+  </header>
+
+  <!-- ── PASO 1: Plantilla ── -->
+  <div class="step" id="step1">
+    <div class="step-header">
+      <div class="step-num" id="num1">1</div>
+      <span class="step-title">Elige la plantilla Excel</span>
+    </div>
+    <select id="template-select">
+      <option value="">Cargando plantillas…</option>
+    </select>
+  </div>
+
+  <!-- ── PASO 2: CSV ── -->
+  <div class="step disabled" id="step2">
+    <div class="step-header">
+      <div class="step-num" id="num2">2</div>
+      <span class="step-title">Sube el CSV del tacógrafo</span>
+      <span class="step-sub" id="csv-name"></span>
+    </div>
+    <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Zona para arrastrar el CSV">
+      <div class="dropzone-icon" id="dz-icon">📂</div>
+      <p><strong>Arrastra el fichero .csv aquí</strong></p>
+      <p>o haz clic para buscarlo</p>
+      <small>Solo ficheros .csv · Máx 16 MB</small>
+    </div>
+    <input type="file" id="csv-input" accept=".csv">
+    <div class="alert alert-error" id="csv-error"></div>
+  </div>
+
+  <!-- ── PASO 3: Actividades manuales ── -->
+  <div class="step disabled" id="step3">
+    <div class="step-header">
+      <div class="step-num" id="num3">3</div>
+      <span class="step-title">Actividades sin tacógrafo</span>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-label">¿Hay actividades que añadir manualmente?</span>
+      <label class="toggle">
+        <input type="checkbox" id="manual-toggle">
+        <span class="slider-track"></span>
+      </label>
+    </div>
+    <div id="manual-section" style="display:none; margin-top:1.2rem;">
+      <div id="shifts-container"></div>
+      <button class="btn btn-secondary btn-sm" onclick="addShift()">+ Añadir actividad</button>
+    </div>
+  </div>
+
+  <!-- ── PASO 4: Ciudades desconocidas ── -->
+  <div class="step disabled" id="step4">
+    <div class="step-header">
+      <div class="step-num" id="num4">4</div>
+      <span class="step-title">Ciudades de las regiones detectadas</span>
+    </div>
+    <p style="font-size:0.88rem; color:#6b7280; margin-bottom:1rem;">
+      El CSV contiene estas regiones. Escribe la ciudad concreta para cada una.
+    </p>
+    <div class="location-grid" id="location-grid"></div>
+    <div class="alert alert-info" id="no-regions-msg" style="display:flex">
+      No se encontraron regiones desconocidas en el CSV. Puedes continuar.
+    </div>
+  </div>
+
+  <!-- ── PASO 5: Generar ── -->
+  <div class="step disabled" id="step5">
+    <div class="step-header">
+      <div class="step-num" id="num5">5</div>
+      <span class="step-title">Generar informe</span>
+    </div>
+    <div class="row" style="margin-top:0">
+      <button class="btn btn-primary" id="generate-btn" onclick="generate()">
+        <span>⚡ Generar Excel</span>
+        <div class="spinner" id="spinner"></div>
+      </button>
+      <span id="gen-status" style="font-size:0.85rem; color:#6b7280;"></span>
+    </div>
+    <div class="alert alert-error" id="gen-error"></div>
+  </div>
+
+  <!-- ── RESULTADO ── -->
+  <div id="result-section">
+    <hr class="sep">
+    <div class="result-bar">
+      <span class="icon">✅</span>
+      <div>
+        <strong id="result-filename">Fichero generado</strong><br>
+        <small>Listo para descargar o previsualizar</small>
+      </div>
+      <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn btn-secondary btn-sm" id="dl-xlsx" href="#" download>⬇ Descargar .xlsx</a>
+        <a class="btn btn-secondary btn-sm" id="dl-pdf"  href="#" download>⬇ Descargar .pdf</a>
+      </div>
+    </div>
+    <iframe id="pdf-preview" class="pdf-frame" title="Previsualización PDF"></iframe>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+  let csvPath = null;
+  let shiftCount = 0;
+
+  // ── Al cargar: listar plantillas ──────────────────────────────────────────
+  fetch('/api/templates')
+    .then(r => r.json())
+    .then(files => {
+      const sel = document.getElementById('template-select');
+      if (!files.length) {
+        sel.innerHTML = '<option value="">No hay plantillas en excel_templates/</option>';
+        return;
+      }
+      sel.innerHTML = files.map(f => `<option value="${f}">${f}</option>`).join('');
+      sel.dispatchEvent(new Event('change'));  // activa el unlock del paso 2
+      sel.addEventListener('change', () => {
+        if (sel.value) unlock('step2', 'num1');
+      });
+    });
+
+  // ── Drop zone ─────────────────────────────────────────────────────────────
+  const dz = document.getElementById('dropzone');
+  const csvInput = document.getElementById('csv-input');
+
+  dz.addEventListener('click', () => csvInput.click());
+  dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') csvInput.click(); });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+  csvInput.addEventListener('change', () => {
+    if (csvInput.files[0]) handleFile(csvInput.files[0]);
+  });
+
+  function handleFile(file) {
+    if (!file.name.endsWith('.csv')) {
+      showError('csv-error', 'Solo se aceptan ficheros .csv');
+      return;
+    }
+    hideError('csv-error');
+    // Actualizar UI drop zone
+    dz.classList.add('has-file');
+    document.getElementById('dz-icon').textContent = '✅';
+    dz.querySelector('p').innerHTML = `<strong>${file.name}</strong>`;
+    dz.querySelectorAll('p')[1].textContent = 'Haz clic para cambiar el fichero';
+    document.getElementById('csv-name').textContent = file.name;
+
+    // Subir y analizar
+    const fd = new FormData();
+    fd.append('csv', file);
+    fetch('/api/analyze', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { showError('csv-error', data.error); return; }
+        csvPath = data.csv_path;
+        buildLocationFields(data.unknown_regions);
+        unlock('step3', 'num2');
+        unlock('step4');
+        unlock('step5');
+        mark('num2');
+      })
+      .catch(() => showError('csv-error', 'Error al analizar el CSV.'));
+  }
+
+  // ── Toggle actividades manuales ───────────────────────────────────────────
+  document.getElementById('manual-toggle').addEventListener('change', function() {
+    document.getElementById('manual-section').style.display = this.checked ? 'block' : 'none';
+  });
+
+  function addShift() {
+    shiftCount++;
+    const id = shiftCount;
+    const div = document.createElement('div');
+    div.className = 'manual-shift';
+    div.id = `shift-${id}`;
+    div.innerHTML = `
+      <button class="remove-btn" onclick="removeShift(${id})" aria-label="Eliminar actividad">✕</button>
+      <div class="manual-shift-grid">
+        <div class="field"><label>Fecha</label><input type="text" placeholder="DD/MM/AAAA" data-field="fecha" id="fecha-${id}"></div>
+        <div class="field"><label>Hora inicio</label><input type="text" placeholder="08:00" data-field="h_ini" id="hini-${id}"></div>
+        <div class="field"><label>Hora fin</label><input type="text" placeholder="17:00" data-field="h_fin" id="hfin-${id}"></div>
+      </div>
+      <div class="manual-shift-grid2">
+        <div class="field"><label>Concepto</label><input type="text" placeholder="CURSOS, REVISIÓN…" data-field="concepto" id="concepto-${id}"></div>
+        <div class="field"><label>Kms totales</label><input type="text" placeholder="0" data-field="km" id="km-${id}"></div>
+      </div>`;
+    document.getElementById('shifts-container').appendChild(div);
+  }
+
+  function removeShift(id) {
+    document.getElementById(`shift-${id}`).remove();
+  }
+
+  function getManualShifts() {
+    const result = [];
+    document.querySelectorAll('.manual-shift').forEach(div => {
+      result.push({
+        fecha:    div.querySelector('[data-field="fecha"]').value,
+        h_ini:    div.querySelector('[data-field="h_ini"]').value,
+        h_fin:    div.querySelector('[data-field="h_fin"]').value,
+        concepto: div.querySelector('[data-field="concepto"]').value,
+        km:       div.querySelector('[data-field="km"]').value,
+      });
+    });
+    return result;
+  }
+
+  // ── Location fields ───────────────────────────────────────────────────────
+  function buildLocationFields(regions) {
+    const grid = document.getElementById('location-grid');
+    const noMsg = document.getElementById('no-regions-msg');
+    grid.innerHTML = '';
+    if (!regions.length) {
+      noMsg.style.display = 'flex';
+      return;
+    }
+    noMsg.style.display = 'none';
+    regions.forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'location-item';
+      item.innerHTML = `<label>${r}</label><input type="text" placeholder="Ciudad…" data-region="${r}">`;
+      grid.appendChild(item);
+    });
+  }
+
+  function getLocationMap() {
+    const map = {};
+    document.querySelectorAll('#location-grid input').forEach(inp => {
+      if (inp.value.trim()) map[inp.dataset.region] = inp.value.trim();
+    });
+    return map;
+  }
+
+  // ── Generar ───────────────────────────────────────────────────────────────
+  function generate() {
+    hideError('gen-error');
+    const template = document.getElementById('template-select').value;
+    if (!template) { showError('gen-error', 'Selecciona una plantilla.'); return; }
+    if (!csvPath)  { showError('gen-error', 'Sube el fichero CSV primero.'); return; }
+
+    const btn = document.getElementById('generate-btn');
+    const spinner = document.getElementById('spinner');
+    btn.disabled = true;
+    spinner.style.display = 'block';
+    document.getElementById('gen-status').textContent = 'Generando… puede tardar unos segundos.';
+    document.getElementById('result-section').style.display = 'none';
+
+    fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        csv_path:      csvPath,
+        template:      template,
+        location_map:  getLocationMap(),
+        manual_shifts: document.getElementById('manual-toggle').checked ? getManualShifts() : [],
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+      if (data.error) {
+        showError('gen-error', data.error);
+        document.getElementById('gen-status').textContent = '';
+        return;
+      }
+      document.getElementById('gen-status').textContent = '';
+      showResult(data.output);
+    })
+    .catch(() => {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+      showError('gen-error', 'Error de conexión con el servidor.');
+    });
+  }
+
+  function showResult(filename) {
+    const xlsx = `/outputs/${filename}`;
+    const pdf  = `/outputs/${filename.replace('.xlsx', '.pdf')}`;
+    document.getElementById('result-filename').textContent = filename;
+    document.getElementById('dl-xlsx').href = xlsx;
+    document.getElementById('dl-pdf').href  = pdf;
+    document.getElementById('pdf-preview').src = pdf;
+    document.getElementById('result-section').style.display = 'block';
+    document.getElementById('result-section').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function unlock(stepId, numId) {
+    document.getElementById(stepId).classList.remove('disabled');
+    if (numId) mark(numId);
+  }
+  function mark(numId) {
+    document.getElementById(numId).classList.add('done');
+  }
+  function showError(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = '⚠ ' + msg;
+    el.style.display = 'block';
+  }
+  function hideError(id) {
+    const el = document.getElementById(id);
+    el.textContent = '';
+    el.style.display = 'none';
+  }
+</script>
+</body>
+</html>
