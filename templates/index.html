@@ -435,10 +435,13 @@
         return;
       }
       sel.innerHTML = files.map(f => `<option value="${f}">${f}</option>`).join('');
-      sel.dispatchEvent(new Event('change'));  // activa el unlock del paso 2
-      sel.addEventListener('change', () => {
+
+      const handleTemplateChange = () => {
         if (sel.value) unlock('step2', 'num1');
-      });
+      };
+
+      sel.addEventListener('change', handleTemplateChange);
+      handleTemplateChange();  // activa el paso 2 con la plantilla preseleccionada
     });
 
   // ── Drop zone ─────────────────────────────────────────────────────────────
