@@ -8,6 +8,7 @@ Cambios respecto a v8:
 """
 
 import os
+import json
 import logging
 import pythoncom
 from datetime import datetime, time, timedelta
@@ -15,6 +16,46 @@ from win32com import client
 from parse_tacografo import parse_csv_shifts
 
 logger = logging.getLogger(__name__)
+
+
+def _load_destinos() -> dict:
+    """Carga el mapeo provincia → destinos frecuentes desde destinos.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "destinos.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"destinos.json no encontrado en {config_path}; se usará un mapa vacío.")
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"Error leyendo destinos.json: {e}")
+        return {}
+
+
+DESTINOS_FRECUENTES = _load_destinos()
+
+ # ── Funciones de persistencia y detección de destinos ────────────────────────
+
+def save_destino(provincia: str, destino: str) -> None:
+    """Guarda un destino nuevo en destinos.json para una provincia."""
+    global DESTINOS_FRECUENTES
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "destinos.json")
+    if provincia not in DESTINOS_FRECUENTES:
+        DESTINOS_FRECUENTES[provincia] = []
+    if destino not in DESTINOS_FRECUENTES[provincia]:
+        DESTINOS_FRECUENTES[provincia].append(destino)
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(DESTINOS_FRECUENTES, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved destino '{destino}' for province '{provincia}'")
+    except Exception as e:
+        logger.error(f"Error guardando destino en destinos.json: {e}")
+
+
+def get_destinos_for_province(provincia: str) -> list:
+    """Devuelve la lista de destinos frecuentes para una provincia."""
+    return DESTINOS_FRECUENTES.get(provincia, [])
+
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -24,18 +65,21 @@ MONTHS = {
     9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
 }
 
-TRUCK_MAP = {
-    "4974GCV": "T-3204",
-    "9529MKG": "T-397",
-    "2638KXW": "T-401",
-    "5602JWF": "T-403",
-    "2084MCH": "T-404",
-    "2383KXW": "T-360",
-    "2393LHH": "T-144",
-    "7028MHL": "T-405",
-    "7299NKR": "T423",
-    "7599LKN": "T-3206"
-}
+def _load_truck_map() -> dict:
+    """Carga el mapeo matrícula → número interno desde trucks.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trucks.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"trucks.json no encontrado en {config_path}; se usará un mapa vacío.")
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"Error leyendo trucks.json: {e}")
+        return {}
+
+
+TRUCK_MAP = _load_truck_map()
 
 DIAS_ES = {
     "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
@@ -107,14 +151,20 @@ def parse_csv_for_unknowns(csv_path: str) -> set:
 def fill_excel(
     excel_path: str,
     csv_path: str,
-    location_map: dict,      # {"Andalucía": "Sevilla", "Valencia": "Castellón", ...}
-    manual_shifts: list,     # [{"fecha": "01/06/2025", "h_ini": "08:00", ...}, ...]
+    location_map: dict,                  # {"Andalucía": "Sevilla", "Valencia": "Castellón", ...}
+    manual_shifts: list,                 # [{"fecha": "01/06/2025", "h_ini": "08:00", ...}, ...]
     output_dir: str = ".",
+    truck_map_extra: dict | None = None, # {"7716NCJ": "T-417", ...}
+    destination_save_map: dict | None = None,  # {"Murcia": "Murcia", "Madrid": "Pinto", ...}
 ) -> str:
     """
     Genera el Excel de gastos. Devuelve el nombre del fichero generado.
     Ya no usa input() — toda la info viene como parámetros.
     """
+    # Mezclar mapeo base con el adicional recibido desde la web
+    truck_map = dict(TRUCK_MAP)
+    if truck_map_extra:
+        truck_map.update(truck_map_extra)
     logger.info(f"Starting Excel generation")
     logger.info(f"Template: {os.path.abspath(excel_path)}")
     logger.info(f"CSV: {os.path.abspath(csv_path)}")
@@ -171,11 +221,17 @@ def fill_excel(
             raw_loc = "Madrid"
         abbr = REGION_ABBR.get(raw_loc, "")
         if abbr == "(M)":
-            return "Pinto"
+            # Madrid por defecto va a Pinto, pero si el usuario lo cambió en location_map, usamos eso
+            city = location_map.get(raw_loc, "Pinto")
+            # Guardar destino frecuente (solo la primera vez que se resuelve)
+            save_destino(raw_loc, city)
+            return city
         # Si el usuario proporcionó una ciudad para esta región, la usamos
         if raw_loc in location_map:
             city = location_map[raw_loc]
             suffix = abbr if abbr else ""
+            # Guardar destino frecuente
+            save_destino(raw_loc, city)
             return f"{city} {suffix}".strip()
         # Si ya tiene abreviatura pero no se proporcionó ciudad, devolvemos la región
         if abbr:
@@ -238,7 +294,7 @@ def fill_excel(
             day_end      = daily_stats[current_date]["end"]
 
             plate = shift["plate"]
-            plate_text = f"{plate} / {TRUCK_MAP[plate]}" if plate in TRUCK_MAP else plate
+            plate_text = f"{plate} / {truck_map[plate]}" if plate in truck_map else plate
 
             if (day_end - day_start) >= timedelta(hours=12):
                 plate_text += "\ndietas 12 horas"
@@ -279,10 +335,11 @@ def fill_excel(
                 shift_meals.add("comida")
                 logger.debug(f"{current_date} - Comida: shift spans {s_start_t}-{s_end_t} covering 13:00-15:00")
             
-            # Cena: if shift ends after 22:00
-            if s_end_t > T_2200:
+            # Cena: if shift ends after 22:00 or extends into the next calendar day
+            # (a jornada that finishes after midnight still counts as dinner for the start day)
+            if s_end_t > T_2200 or shift["start_dt"].date() != s_end_dt.date():
                 shift_meals.add("cena")
-                logger.debug(f"{current_date} - Cena: shift ends at {s_end_t} > 22:00")
+                logger.debug(f"{current_date} - Cena: shift ends at {s_end_t}")
 
             # 12-hour jornada logic: if day totals >= 12h, assign all meals for final shift
             day_duration = day_end - day_start
@@ -372,6 +429,8 @@ def export_preview_png(excel_file_path):
     Export the first worksheet as a PNG preview.
     This avoids embedding the PDF directly, which can trigger browser downloads.
     """
+    import time
+
     logger.info(f"Starting PNG preview export: {excel_file_path}")
 
     pythoncom.CoInitialize()
@@ -389,7 +448,11 @@ def export_preview_png(excel_file_path):
 
         print_area = ws.PageSetup.PrintArea
         preview_range = ws.Range(print_area) if print_area else ws.UsedRange
+
+        # Copy the range as a picture to the clipboard and wait a moment so
+        # Excel finishes placing it on the clipboard before pasting into the chart.
         preview_range.CopyPicture(Appearance=1, Format=2)
+        time.sleep(0.5)
 
         chart_obj = ws.ChartObjects().Add(
             preview_range.Left,
@@ -397,6 +460,12 @@ def export_preview_png(excel_file_path):
             preview_range.Width,
             preview_range.Height,
         )
+
+        # Ensure the chart is active before pasting; retry once if needed.
+        try:
+            chart_obj.Activate()
+        except Exception:
+            pass
         chart_obj.Chart.Paste()
         chart_obj.Chart.Export(png_path)
         chart_obj.Delete()

@@ -85,17 +85,18 @@ def parse_csv_shifts(file_path, encoding: str = None):
     
     with open(file_path, mode='r', encoding=encoding) as f:
         reader = csv.reader(f, delimiter=';')
-        
+
         current_shift = None
-        
+        last_closed_shift = None
+
         for row in reader:
             if not any(row): continue
-            
+
             timestamp_str = row[0].strip('"')
             event_type = row[1].strip('"')
             description = row[2].strip('"')
             duration_str = row[4].strip('"')
-            
+
             try:
                 dt = datetime.strptime(timestamp_str, '%d/%m/%y %H:%M:%S')
             except ValueError:
@@ -105,7 +106,7 @@ def parse_csv_shifts(file_path, encoding: str = None):
             if "Card In" in description:
                 if current_shift: # Close previous shift if any (though usually Card Out closes it)
                     shifts.append(current_shift)
-                
+
                 match = re.search(r'Card In \((.*?), (\d+)km\)', description)
                 current_shift = {
                     'start_dt': dt,
@@ -118,7 +119,8 @@ def parse_csv_shifts(file_path, encoding: str = None):
                     'work_duration': timedelta(0),
                     'drive_duration': timedelta(0)
                 }
-            
+                last_closed_shift = None
+
             # Location events (can be origin or destination)
             elif "#SYS#COUNTRY" in description:
                 loc_match = re.search(r'\|,\s*(.*)', description)
@@ -126,16 +128,24 @@ def parse_csv_shifts(file_path, encoding: str = None):
                     location = loc_match.group(1).split('(')[0].strip()
                     km_match = re.search(r'\((\d+)km\)', description)
                     km = int(km_match.group(1)) if km_match else None
-                    
-                    if current_shift:
-                        if current_shift['origin'] is None:
-                            current_shift['origin'] = location
+
+                    # The location event may belong to the current open shift or,
+                    # if it appears right after a Card Out, to the shift that just
+                    # closed (as its destination).
+                    target_shift = current_shift
+                    if target_shift is None and last_closed_shift is not None:
+                        if last_closed_shift.get('end_dt') == dt:
+                            target_shift = last_closed_shift
+
+                    if target_shift:
+                        if target_shift['origin'] is None:
+                            target_shift['origin'] = location
                         else:
-                            current_shift['destination'] = location
-                        
-                        if km and (current_shift['km_end'] is None or km > current_shift['km_end']):
-                            current_shift['km_end'] = km
-                            current_shift['end_dt'] = dt # If it has KM, it might be the end of day
+                            target_shift['destination'] = location
+
+                        if km and (target_shift['km_end'] is None or km > target_shift['km_end']):
+                            target_shift['km_end'] = km
+                            target_shift['end_dt'] = dt # If it has KM, it might be the end of day
 
             # Card Out (Explicit end)
             elif "Card Out" in description:
@@ -144,6 +154,7 @@ def parse_csv_shifts(file_path, encoding: str = None):
                     current_shift['km_end'] = int(match.group(2)) if match else current_shift['km_end']
                     current_shift['end_dt'] = dt
                     shifts.append(current_shift)
+                    last_closed_shift = current_shift
                     current_shift = None
 
             # Hours accumulation
@@ -158,6 +169,43 @@ def parse_csv_shifts(file_path, encoding: str = None):
             shifts.append(current_shift)
 
     return shifts
+
+
+def extract_destinations(csv_path: str, encoding: str = None) -> list:
+    """
+    Extrae las regiones y destinos únicos del CSV.
+    Devuelve una lista de tuplas (tipo, nombre): ('region', 'Murcia') o ('destino', 'Murcia').
+    """
+    if encoding is None:
+        encoding = detect_csv_encoding(csv_path)
+
+    regions = set()
+    destinations = set()
+
+    with open(csv_path, mode='r', encoding=encoding) as f:
+        reader = csv.reader(f, delimiter=';')
+
+        for row in reader:
+            if not any(row):
+                continue
+
+            description = row[2].strip('"')
+            if "#SYS#COUNTRY" in description:
+                loc_match = re.search(r'\|,\s*(.*)', description)
+                if loc_match:
+                    location = loc_match.group(1).split('(')[0].strip()
+                    destinations.add(location)
+
+    # Convertimos destinos en regiones usando el mapa de abreviaturas
+    # para inferir la provincia/región
+    for dest in destinations:
+        # La regla es simple: si el destino ya está en la lista de regiones,
+        # se omite. En la práctica, el CSV da destinos directos como "Madrid", "Murcia", etc.
+        # que también son regiones.
+        regions.add(dest)
+
+    return list(regions) + [(d, dest) for d, dest in zip(["destino"] * len(destinations), destinations)] if destinations else []
+
 
 if __name__ == "__main__":
     logging.basicConfig(

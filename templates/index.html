@@ -388,10 +388,25 @@
     </div>
   </div>
 
-  <!-- ── PASO 5: Generar ── -->
+  <!-- ── PASO 5: Camiones desconocidos ── -->
   <div class="step disabled" id="step5">
     <div class="step-header">
       <div class="step-num" id="num5">5</div>
+      <span class="step-title">Números internos de camiones</span>
+    </div>
+    <p style="font-size:0.88rem; color:#6b7280; margin-bottom:1rem;">
+      Estas matrículas no están en la base de datos. Escribe el número interno (p. ej. T-417) para cada una.
+    </p>
+    <div class="location-grid" id="truck-grid"></div>
+    <div class="alert alert-info" id="no-trucks-msg" style="display:flex">
+      No se encontraron camiones desconocidos en el CSV. Puedes continuar.
+    </div>
+  </div>
+
+  <!-- ── PASO 6: Generar ── -->
+  <div class="step disabled" id="step6">
+    <div class="step-header">
+      <div class="step-num" id="num6">6</div>
       <span class="step-title">Generar informe</span>
     </div>
     <div class="row" style="margin-top:0">
@@ -486,9 +501,11 @@
         if (data.error) { showError('csv-error', data.error); return; }
         csvPath = data.csv_path;
         buildLocationFields(data.unknown_regions);
+        buildTruckFields(data.unknown_trucks);
         unlock('step3', 'num2');
         unlock('step4');
         unlock('step5');
+        unlock('step6');
         mark('num2');
       })
       .catch(() => showError('csv-error', 'Error al analizar el CSV.'));
@@ -550,8 +567,25 @@
     regions.forEach(r => {
       const item = document.createElement('div');
       item.className = 'location-item';
-      item.innerHTML = `<label>${r}</label><input type="text" placeholder="Ciudad…" data-region="${r}">`;
+      
+      // Datalist para destinos frecuentes por provincia
+      const datalistId = `destinos-${r.replace(/\s+/g, '-').toLowerCase()}`;
+      item.innerHTML = `
+        <label>${r}</label>
+        <input type="text" list="${datalistId}" placeholder="Ciudad…" data-region="${r}">
+        <datalist id="${datalistId}"></datalist>`;
       grid.appendChild(item);
+      
+      // Cargar destinos frecuentes desde el backend
+      fetch(`/api/destinos/${encodeURIComponent(r)}`)
+        .then(res => res.json())
+        .then(destinations => {
+          const dl = document.getElementById(datalistId);
+          if (dl && destinations && destinations.length) {
+            dl.innerHTML = destinations.map(d => `<option value="${d}">`).join('');
+          }
+        })
+        .catch(() => {});
     });
   }
 
@@ -559,6 +593,32 @@
     const map = {};
     document.querySelectorAll('#location-grid input').forEach(inp => {
       if (inp.value.trim()) map[inp.dataset.region] = inp.value.trim();
+    });
+    return map;
+  }
+
+  // ── Truck fields ────────────────────────────────────────────────────────────
+  function buildTruckFields(trucks) {
+    const grid = document.getElementById('truck-grid');
+    const noMsg = document.getElementById('no-trucks-msg');
+    grid.innerHTML = '';
+    if (!trucks || !trucks.length) {
+      noMsg.style.display = 'flex';
+      return;
+    }
+    noMsg.style.display = 'none';
+    trucks.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'location-item';
+      item.innerHTML = `<label>${t}</label><input type="text" placeholder="T-417…" data-plate="${t}">`;
+      grid.appendChild(item);
+    });
+  }
+
+  function getTruckMap() {
+    const map = {};
+    document.querySelectorAll('#truck-grid input').forEach(inp => {
+      if (inp.value.trim()) map[inp.dataset.plate] = inp.value.trim();
     });
     return map;
   }
@@ -581,10 +641,12 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        csv_path:      csvPath,
-        template:      template,
-        location_map:  getLocationMap(),
-        manual_shifts: document.getElementById('manual-toggle').checked ? getManualShifts() : [],
+        csv_path:              csvPath,
+        template:              template,
+        location_map:          getLocationMap(),
+        manual_shifts:         document.getElementById('manual-toggle').checked ? getManualShifts() : [],
+        truck_map:             getTruckMap(),
+        destination_save_map:  getLocationMap()
       })
     })
     .then(r => r.json())

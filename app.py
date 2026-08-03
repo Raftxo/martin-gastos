@@ -1,14 +1,52 @@
 """
-app.py — Servidor Flask para la web app de gastos.
-Ejecutar con: python app.py
+app.py — Servidor Flask para la web app de gastos de tacógrafo.
+
+DESCRIPCIÓN GENERAL
+-------------------
+Esta aplicación web permite cargar un CSV de actividades de tacógrafo,
+mapear regiones desconocidas a ciudades, añadir actividades manuales
+(opcionalmente) y generar un informe de gastos en Excel/PDF.
+
+FLUJO TÍPICO DE USO
+-------------------
+1. El usuario abre http://localhost:5000 en el navegador.
+2. Selecciona un archivo CSV de actividades y una plantilla Excel.
+3. La app analiza el CSV y detecta regiones desconocidas.
+4. El usuario completa el mapeo de regiones → ciudades.
+5. La app genera el Excel, convierte a PDF y muestra una vista previa.
+
+RUTAS PRINCIPALES
+-----------------
+- GET  /              : Página principal (index.html).
+- GET  /api/templates : Lista las plantillas Excel disponibles.
+- POST /api/analyze   : Recibe el CSV y devuelve regiones desconocidas.
+- POST /api/generate  : Recibe el formulario completo y genera Excel/PDF.
+- GET  /outputs/<f>   : Sirve los archivos generados.
+
+CÓMO EJECUTAR
+-------------
+    cd web_app
+    python app.py
+
+El servidor arranca en http://localhost:5000 y, al iniciarse, abre
+automáticamente el navegador en esa dirección.
+
+DEPENDENCIAS
+------------
+- Flask
+- fill_excel_v9 (módulo local)
+- Plantillas Excel en ./excel_templates
 """
 
 import os
 import json
 import logging
+import threading
+import webbrowser
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf, export_preview_png
+from fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf, export_preview_png, get_destinos_for_province
+from parse_tacografo import parse_csv_shifts, extract_destinations
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -32,6 +70,41 @@ UPLOADS_DIR   = os.path.join(BASE_DIR, "uploads")
 for d in [TEMPLATES_DIR, OUTPUTS_DIR, UPLOADS_DIR]:
     os.makedirs(d, exist_ok=True)
 
+TRUCKS_FILE = os.path.join(BASE_DIR, "trucks.json")
+
+
+def _load_trucks() -> dict:
+    """Carga el mapeo matrícula → número interno desde trucks.json."""
+    try:
+        with open(TRUCKS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"Error leyendo {TRUCKS_FILE}: {e}")
+        return {}
+
+
+def _save_trucks(trucks: dict) -> None:
+    """Guarda el mapeo matrícula → número interno en trucks.json."""
+    try:
+        with open(TRUCKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(trucks, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error guardando {TRUCKS_FILE}: {e}")
+
+
+def _unknown_trucks(csv_path: str) -> list:
+    """Devuelve las matrículas del CSV que no están en trucks.json."""
+    trucks = _load_trucks()
+    shifts = parse_csv_shifts(csv_path)
+    unknowns = set()
+    for s in shifts:
+        plate = s.get("plate")
+        if plate and plate not in trucks:
+            unknowns.add(plate)
+    return sorted(unknowns)
+
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +119,13 @@ def list_templates():
     # Poner la plantilla Raftxo primera si existe
     files.sort(key=lambda f: (0 if "Raftxo" in f else 1, f))
     return jsonify(files)
+
+
+@app.route("/api/destinos/<provincia>")
+def get_destinos(provincia):
+    """Devuelve los destinos frecuentes para una provincia."""
+    destinos = get_destinos_for_province(provincia)
+    return jsonify(destinos)
 
 
 @app.route("/api/analyze", methods=["POST"])
@@ -70,11 +150,17 @@ def analyze():
     try:
         logger.info(f"Analyzing CSV for unknown regions: {csv_path}")
         unknown_regions = parse_csv_for_unknowns(csv_path)
+        unknown_trucks = _unknown_trucks(csv_path)
+        unknown_destinations = extract_destinations(csv_path)
         logger.info(f"Found {len(unknown_regions)} unknown regions: {unknown_regions}")
-        
+        logger.info(f"Found {len(unknown_trucks)} unknown trucks: {unknown_trucks}")
+        logger.info(f"Found {len(unknown_destinations)} destinations: {unknown_destinations}")
+
         return jsonify({
             "csv_path": csv_path,
-            "unknown_regions": list(unknown_regions)
+            "unknown_regions": list(unknown_regions),
+            "unknown_trucks": unknown_trucks,
+            "destinations": unknown_destinations
         })
     except ValueError as e:
         logger.error(f"CSV validation error: {e}")
@@ -97,12 +183,14 @@ def generate():
     }
     """
     logger.info("Received /api/generate request")
-    
+
     data = request.get_json()
-    csv_path      = data.get("csv_path")
-    template_name = data.get("template")
-    location_map  = data.get("location_map", {})
-    manual_shifts = data.get("manual_shifts", [])
+    csv_path            = data.get("csv_path")
+    template_name       = data.get("template")
+    location_map        = data.get("location_map", {})
+    manual_shifts       = data.get("manual_shifts", [])
+    truck_map_extra     = data.get("truck_map", {})
+    destination_save_map = data.get("destination_save_map", {})  # {"Madrid": "Pinto", "Murcia": "Murcia", ...}
 
     # Validate inputs
     if not csv_path or not template_name:
@@ -126,13 +214,29 @@ def generate():
 
     logger.info(f"Generating Excel with {len(manual_shifts)} manual shifts")
 
+    # Guardar en trucks.json los nuevos mapeos de matrículas recibidos
+    if truck_map_extra:
+        trucks = _load_trucks()
+        trucks.update(truck_map_extra)
+        _save_trucks(trucks)
+        logger.info(f"Saved {len(truck_map_extra)} new truck mappings to {TRUCKS_FILE}")
+
     try:
+        # Guardar destinos frecuentes si se proporcionó un mapa
+        if destination_save_map:
+            from fill_excel_v9 import save_destino
+            for provincia, destino in destination_save_map.items():
+                save_destino(provincia, destino)
+            logger.info(f"Saved {len(destination_save_map)} destinations to destinos.json")
+
         output_filename = fill_excel(
-            excel_path    = template_path,
-            csv_path      = csv_path,
-            location_map  = location_map,
-            manual_shifts = manual_shifts,
-            output_dir    = OUTPUTS_DIR,
+            excel_path          = template_path,
+            csv_path            = csv_path,
+            location_map        = location_map,
+            manual_shifts       = manual_shifts,
+            output_dir          = OUTPUTS_DIR,
+            truck_map_extra     = truck_map_extra,
+            destination_save_map = destination_save_map or None,
         )
         logger.info(f"Excel generated successfully: {output_filename}")
         
@@ -158,14 +262,16 @@ def generate():
         except Exception as preview_err:
             logger.warning(f"PNG preview failed (non-fatal): {preview_err}")
         
-        # Clean up the uploaded CSV file
-        try:
-            if os.path.exists(csv_path):
-                os.remove(csv_path)
-                logger.info(f"Cleaned up uploaded CSV: {csv_path}")
-        except Exception as cleanup_err:
-            logger.warning(f"Failed to cleanup CSV file: {cleanup_err}")
-        
+        # NOTE: El CSV subido se conserva en uploads/ para facilitar la
+        # depuración. Si en el futuro se quiere borrar automáticamente,
+        # descomenta el bloque siguiente.
+        # try:
+        #     if os.path.exists(csv_path):
+        #         os.remove(csv_path)
+        #         logger.info(f"Cleaned up uploaded CSV: {csv_path}")
+        # except Exception as cleanup_err:
+        #     logger.warning(f"Failed to cleanup CSV file: {cleanup_err}")
+
         return jsonify({"output": output_filename, "preview": preview_filename})
     except ValueError as e:
         logger.error(f"Validation error in Excel generation: {e}")
@@ -194,6 +300,15 @@ def serve_output(filename):
 
 # ── Arranque ─────────────────────────────────────────────────────────────────
 
+def _open_browser_delayed(url: str = "http://localhost:5000", delay: float = 1.0) -> None:
+    """Abre el navegador en la URL del servidor tras un pequeño retraso."""
+    def _open() -> None:
+        logger.info(f"Abriendo navegador en {url}")
+        webbrowser.open(url)
+
+    threading.Timer(delay, _open).start()
+
+
 if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("Starting Flask web app")
@@ -201,5 +316,11 @@ if __name__ == "__main__":
     logger.info(f"Outputs directory: {OUTPUTS_DIR}")
     logger.info(f"Uploads directory: {UPLOADS_DIR}")
     logger.info("=" * 60)
-    
+
+    # Abrir el navegador automáticamente, pero solo en el proceso principal.
+    # En modo debug Werkzeug lanza un segundo proceso de recarga; con la
+    # variable WERKZEUG_RUN_MAIN evitamos que se abra una segunda ventana.
+    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        _open_browser_delayed()
+
     app.run(debug=True, port=5000)
