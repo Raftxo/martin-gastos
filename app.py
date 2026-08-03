@@ -45,8 +45,21 @@ import threading
 import webbrowser
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf, export_preview_png, get_destinos_for_province
-from parse_tacografo import parse_csv_shifts, extract_destinations
+try:
+    from web_app.fill_excel_v9 import fill_excel, parse_csv_for_unknowns, convert_to_pdf, export_preview_png, get_destinos_for_province
+    from web_app.parse_tacografo import parse_csv_shifts, extract_destinations
+except ImportError:
+    import importlib
+    module = importlib.import_module("fill_excel_v9")
+    fill_excel = module.fill_excel
+    parse_csv_for_unknowns = module.parse_csv_for_unknowns
+    convert_to_pdf = module.convert_to_pdf
+    export_preview_png = module.export_preview_png
+    get_destinos_for_province = module.get_destinos_for_province
+
+    module = importlib.import_module("parse_tacografo")
+    parse_csv_shifts = module.parse_csv_shifts
+    extract_destinations = module.extract_destinations
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(

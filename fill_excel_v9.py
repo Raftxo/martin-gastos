@@ -13,7 +13,13 @@ import logging
 import pythoncom
 from datetime import datetime, time, timedelta
 from win32com import client
-from parse_tacografo import parse_csv_shifts
+
+try:
+    from web_app.parse_tacografo import parse_csv_shifts
+except ImportError:
+    import importlib
+    module = importlib.import_module("parse_tacografo")
+    parse_csv_shifts = module.parse_csv_shifts
 
 logger = logging.getLogger(__name__)
 
